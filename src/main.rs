@@ -13,11 +13,12 @@
 //! curl -X POST 127.0.0.1:3000
 //! ```
 
+use askama::Template;
 use axum::{
     async_trait,
-    extract::{FromRef, FromRequestParts, State},
+    extract::{FromRef, FromRequestParts, Path, State},
     http::{request::Parts, StatusCode},
-    response::Html,
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
@@ -55,6 +56,7 @@ async fn main() {
     // build our application with some routes
     let app = Router::new()
         .route("/", get(get_index).post(using_connection_extractor))
+        .route("/:question_id", get(get_question))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(pool);
 
@@ -67,31 +69,68 @@ async fn main() {
         .unwrap();
 }
 
-/// A basic header with a dynamic `page_title`.
-fn header(page_title: &str) -> Markup {
-    html! {
-        (DOCTYPE)
-        script src="/static/htmx.min.js" {}
-        script src="https://cdn.tailwindcss.com" {}
-        meta charset="utf-8" {}
-        title { (page_title) }
-    }
-}
-
 // we can extract the connection pool with `State`
-async fn get_index(State(pool): State<PgPool>) -> Result<Markup, (StatusCode, String)> {
+async fn get_index(
+    State(pool): State<PgPool>,
+) -> Result<HelloTemplate<'static>, (StatusCode, String)> {
     /*let res = sqlx::query_scalar("select 'hello world from pg'")
     .fetch_one(&pool)
     .await
     .map_err(internal_error);*/
 
-    let name = "Lyra";
-    let markup = html! {
-        (header("Test"))
+    Ok(HelloTemplate { name: "world" })
+}
 
-        p class="m-6" { "Hi, " (name) "!" }
-    };
-    Ok(markup)
+// we can extract the connection pool with `State`
+async fn get_question(
+    Path(user_id): Path<String>,
+    State(pool): State<PgPool>,
+) -> impl IntoResponse {
+    /*let res = sqlx::query_scalar("select 'hello world from pg'")
+    .fetch_one(&pool)
+    .await
+    .map_err(internal_error);*/
+
+    if let Ok(question) = sqlx::query_as!(Question, "select * from questions limit 1")
+        .fetch_optional(&pool)
+        .await
+    {
+        let template = QuestionTemplate {
+            text: user_id.clone(),
+            answers: vec![String::from("test"), String::from("test2")],
+        };
+
+        return HtmlTemplate(template);
+    } else {
+        return HtmlTemplate::<NotFoundTemplate>(NotFoundTemplate {});
+    }
+}
+
+#[derive(Template)]
+#[template(path = "404.html")]
+struct NotFoundTemplate {}
+
+struct Question {
+    question_id: i32,
+    question_text: Option<String>,
+    quiz_id: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "index.html")]
+struct HelloTemplate<'a> {
+    name: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "show_question.html")]
+struct QuestionTemplate {
+    pub(crate) text: String,
+    pub(crate) answers: Vec<String>,
+}
+
+async fn hello() -> HelloTemplate<'static> {
+    HelloTemplate { name: "world" }
 }
 
 // we can also write a custom extractor that grabs a connection from the pool
@@ -131,4 +170,26 @@ where
     E: std::error::Error,
 {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+struct HtmlTemplate<T>(T);
+
+/// Allows us to convert Askama HTML templates into valid HTML for axum to serve in the response.
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: Template,
+{
+    fn into_response(self) -> Response {
+        // Attempt to render the template with askama
+        match self.0.render() {
+            // If we're able to successfully parse and aggregate the template, serve it
+            Ok(html) => Html(html).into_response(),
+            // If we're not, return an error or some bit of fallback HTML
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to render template. Error: {}", err),
+            )
+                .into_response(),
+        }
+    }
 }

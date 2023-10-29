@@ -15,6 +15,9 @@ sqlx = { version = "0.7", features = [
     "runtime-tokio-rustls",
     "any",
     "postgres",
+    "macros",
 ] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.4.0", features = ["fs", "trace"] }
+askama = { version = "0.12.1", features = ["with-axum", "mime", "mime_guess"] }
+askama_axum = "0.3.0"
