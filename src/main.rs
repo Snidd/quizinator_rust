@@ -17,7 +17,7 @@ use askama::Template;
 use axum::{
     async_trait,
     extract::{FromRef, FromRequestParts, Path, State},
-    http::{request::Parts, StatusCode},
+    http::{header, request::Parts, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
@@ -55,7 +55,7 @@ async fn main() {
 
     // build our application with some routes
     let app = Router::new()
-        .route("/", get(get_index).post(using_connection_extractor))
+        //.route("/", get(get_index).post(using_connection_extractor))
         .route("/:question_id", get(get_question))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(pool);
@@ -70,7 +70,7 @@ async fn main() {
 }
 
 // we can extract the connection pool with `State`
-async fn get_index(
+/*async fn get_index(
     State(pool): State<PgPool>,
 ) -> Result<HelloTemplate<'static>, (StatusCode, String)> {
     /*let res = sqlx::query_scalar("select 'hello world from pg'")
@@ -79,30 +79,101 @@ async fn get_index(
     .map_err(internal_error);*/
 
     Ok(HelloTemplate { name: "world" })
+}*/
+
+struct Question {
+    pub question_id: i32,
+    pub question_text: String,
+    pub quiz_id: i32,
+}
+
+struct Answer {
+    pub answer_id: i32,
+    pub answer_text: String,
+    pub answer_is_correct: bool,
+    pub question_id: i32,
 }
 
 // we can extract the connection pool with `State`
-async fn get_question(
-    Path(user_id): Path<String>,
-    State(pool): State<PgPool>,
-) -> impl IntoResponse {
-    /*let res = sqlx::query_scalar("select 'hello world from pg'")
-    .fetch_one(&pool)
-    .await
-    .map_err(internal_error);*/
 
-    if let Ok(question) = sqlx::query_as!(Question, "select * from questions limit 1")
-        .fetch_optional(&pool)
-        .await
-    {
-        let template = QuestionTemplate {
-            text: user_id.clone(),
-            answers: vec![String::from("test"), String::from("test2")],
+async fn get_question(
+    Path(question_id): Path<i32>,
+    State(pool): State<PgPool>,
+) -> Result<impl IntoResponse> {
+    let question = sqlx::query_as!(
+        Question,
+        "select * from questions where question_id = $1",
+        question_id
+    )
+    .fetch_optional(&pool)
+    .await?
+    .ok_or(Error::NotFound)?;
+
+    let answers = sqlx::query_as!(
+        Answer,
+        "select * from answers where question_id = $1",
+        question.question_id
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let template = QuestionTemplate {
+        text: question.question_text,
+        answers: answers
+            .iter()
+            .map(|answer| answer.answer_text.clone())
+            .collect(),
+    };
+
+    return Ok(Html(template.render().unwrap()));
+
+    /*else {
+        return Html(NotFoundTemplate {}.render().unwrap());
+        //How to return 404 when question not found?!
+    }*/
+}
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Request path not found")]
+    NotFound,
+
+    #[error("an error occurred with the database")]
+    Sqlx(#[from] sqlx::Error),
+
+    #[error("an internal server error occurred")]
+    Anyhow(#[from] anyhow::Error),
+}
+
+impl Error {
+    /*fn status_code(&self) -> StatusCode {
+        match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Sqlx(_) | Self::Anyhow(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }*/
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let body = match self {
+            Error::NotFound => (
+                StatusCode::NOT_FOUND,
+                Html(NotFoundTemplate {}.render().unwrap()),
+            ),
+            Error::Sqlx(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(InternalServerErrorTemplate {}.render().unwrap()),
+            ),
+            Error::Anyhow(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(InternalServerErrorTemplate {}.render().unwrap()),
+            ),
         };
 
-        return HtmlTemplate(template);
-    } else {
-        return HtmlTemplate::<NotFoundTemplate>(NotFoundTemplate {});
+        return body.into_response();
     }
 }
 
@@ -110,11 +181,9 @@ async fn get_question(
 #[template(path = "404.html")]
 struct NotFoundTemplate {}
 
-struct Question {
-    question_id: i32,
-    question_text: Option<String>,
-    quiz_id: Option<i32>,
-}
+#[derive(Template)]
+#[template(path = "500.html")]
+struct InternalServerErrorTemplate {}
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -131,36 +200,6 @@ struct QuestionTemplate {
 
 async fn hello() -> HelloTemplate<'static> {
     HelloTemplate { name: "world" }
-}
-
-// we can also write a custom extractor that grabs a connection from the pool
-// which setup is appropriate depends on your application
-struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::Postgres>);
-
-#[async_trait]
-impl<S> FromRequestParts<S> for DatabaseConnection
-where
-    PgPool: FromRef<S>,
-    S: Send + Sync,
-{
-    type Rejection = (StatusCode, String);
-
-    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = PgPool::from_ref(state);
-
-        let conn = pool.acquire().await.map_err(internal_error)?;
-
-        Ok(Self(conn))
-    }
-}
-
-async fn using_connection_extractor(
-    DatabaseConnection(mut conn): DatabaseConnection,
-) -> Result<String, (StatusCode, String)> {
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(internal_error)
 }
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
