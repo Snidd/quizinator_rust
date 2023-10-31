@@ -1,12 +1,25 @@
-{% extends "base.html" %}
-{% block title %}Question ...{% endblock %}
-
-{% block content %}
-    <p>Question here {{text}}</p>
-    <ul>
-        {% for answer in answers %}
-            <li>{{ answer }}</li>
-        {% endfor %}
-    </ul>
+{% extends "base.html" %} {% block title %}Question ...{% endblock %} {% block
+content %}
+<div class="p-4">
+  <p class="p-2 mb-4 text-xl">
+    <span class="font-bold">Inrikes.</span> {{text}}
+  </p>
+  <ul class="grid grid-cols-2 grid-rows-2 gap-2">
+    {% for answer in answers %}
+    <li
+      hx-get="/6"
+      hx-push-url="true"
+      hx-swap="outerHTML"
+      hx-targeT="body"
+      class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium text-xl rounded-lg px-5 py-8 mr-2 mb-2 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800"
+    >
+      {{ answer }}
+    </li>
+    {% endfor %} {% match next_question_id %} {% when Some with (val) %}
+    <p>Next question {{ val }}</p>
+    {% when None %}
+    <p>No next question</p>
+    {% endmatch %}
+  </ul>
+</div>
 {% endblock %}
-

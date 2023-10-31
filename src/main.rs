@@ -13,24 +13,27 @@
 //! curl -X POST 127.0.0.1:3000
 //! ```
 
-use askama::Template;
 use axum::{
-    async_trait,
-    extract::{FromRef, FromRequestParts, Path, State},
-    http::{header, request::Parts, StatusCode},
-    response::{Html, IntoResponse, Response},
+    extract::{Path, State},
+    response::IntoResponse,
     routing::get,
     Router,
 };
+use error::{Error, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use templates::{HtmlTemplate, QuestionTemplate};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use maud::{html, Markup, DOCTYPE};
 use std::{net::SocketAddr, time::Duration};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
+use tower_http::services::ServeDir;
+
+use answer::*;
+use question::*;
+
+mod answer;
+mod error;
+mod question;
+mod templates;
 
 #[tokio::main]
 async fn main() {
@@ -69,33 +72,6 @@ async fn main() {
         .unwrap();
 }
 
-// we can extract the connection pool with `State`
-/*async fn get_index(
-    State(pool): State<PgPool>,
-) -> Result<HelloTemplate<'static>, (StatusCode, String)> {
-    /*let res = sqlx::query_scalar("select 'hello world from pg'")
-    .fetch_one(&pool)
-    .await
-    .map_err(internal_error);*/
-
-    Ok(HelloTemplate { name: "world" })
-}*/
-
-struct Question {
-    pub question_id: i32,
-    pub question_text: String,
-    pub quiz_id: i32,
-}
-
-struct Answer {
-    pub answer_id: i32,
-    pub answer_text: String,
-    pub answer_is_correct: bool,
-    pub question_id: i32,
-}
-
-// we can extract the connection pool with `State`
-
 async fn get_question(
     Path(question_id): Path<i32>,
     State(pool): State<PgPool>,
@@ -117,118 +93,24 @@ async fn get_question(
     .fetch_all(&pool)
     .await?;
 
+    let next_question_id = sqlx::query_scalar!(
+        "select question_id from questions where question_order > $1 order by question_order limit 1", question.question_order)
+        .fetch_optional(&pool)
+        .await?;
+
     let template = QuestionTemplate {
         text: question.question_text,
         answers: answers
             .iter()
             .map(|answer| answer.answer_text.clone())
             .collect(),
+        next_question_id: next_question_id,
     };
 
-    return Ok(Html(template.render().unwrap()));
+    return Ok(HtmlTemplate(template));
 
     /*else {
         return Html(NotFoundTemplate {}.render().unwrap());
         //How to return 404 when question not found?!
     }*/
-}
-
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("Request path not found")]
-    NotFound,
-
-    #[error("an error occurred with the database")]
-    Sqlx(#[from] sqlx::Error),
-
-    #[error("an internal server error occurred")]
-    Anyhow(#[from] anyhow::Error),
-}
-
-impl Error {
-    /*fn status_code(&self) -> StatusCode {
-        match self {
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::Sqlx(_) | Self::Anyhow(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }*/
-}
-
-impl IntoResponse for Error {
-    fn into_response(self) -> Response {
-        let body = match self {
-            Error::NotFound => (
-                StatusCode::NOT_FOUND,
-                Html(NotFoundTemplate {}.render().unwrap()),
-            ),
-            Error::Sqlx(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Html(InternalServerErrorTemplate {}.render().unwrap()),
-            ),
-            Error::Anyhow(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Html(InternalServerErrorTemplate {}.render().unwrap()),
-            ),
-        };
-
-        return body.into_response();
-    }
-}
-
-#[derive(Template)]
-#[template(path = "404.html")]
-struct NotFoundTemplate {}
-
-#[derive(Template)]
-#[template(path = "500.html")]
-struct InternalServerErrorTemplate {}
-
-#[derive(Template)]
-#[template(path = "index.html")]
-struct HelloTemplate<'a> {
-    name: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "show_question.html")]
-struct QuestionTemplate {
-    pub(crate) text: String,
-    pub(crate) answers: Vec<String>,
-}
-
-async fn hello() -> HelloTemplate<'static> {
-    HelloTemplate { name: "world" }
-}
-
-/// Utility function for mapping any error into a `500 Internal Server Error`
-/// response.
-fn internal_error<E>(err: E) -> (StatusCode, String)
-where
-    E: std::error::Error,
-{
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-}
-
-struct HtmlTemplate<T>(T);
-
-/// Allows us to convert Askama HTML templates into valid HTML for axum to serve in the response.
-impl<T> IntoResponse for HtmlTemplate<T>
-where
-    T: Template,
-{
-    fn into_response(self) -> Response {
-        // Attempt to render the template with askama
-        match self.0.render() {
-            // If we're able to successfully parse and aggregate the template, serve it
-            Ok(html) => Html(html).into_response(),
-            // If we're not, return an error or some bit of fallback HTML
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to render template. Error: {}", err),
-            )
-                .into_response(),
-        }
-    }
 }
