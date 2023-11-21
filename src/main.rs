@@ -14,21 +14,24 @@
 //! ```
 
 use axum::{
-    extract::{Path, State},
-    response::IntoResponse,
+    async_trait,
+    extract::{FromRequestParts, Path, State},
+    http::{self, request::Parts},
+    response::{IntoResponse, Redirect},
     routing::get,
     Router,
 };
 use error::{Error, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use templates::{HtmlTemplate, QuestionTemplate};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use std::{net::SocketAddr, time::Duration};
+use tower_cookies::{Cookie, CookieManagerLayer, Cookies};
 use tower_http::services::ServeDir;
 
 use answer::*;
 use question::*;
+use templates::*;
 
 mod answer;
 mod error;
@@ -60,8 +63,10 @@ async fn main() {
     let app = Router::new()
         //.route("/", get(get_index).post(using_connection_extractor))
         .route("/:question_id", get(get_question))
+        .route("/", get(get_user))
         .nest_service("/static", ServeDir::new("static"))
-        .with_state(pool);
+        .with_state(pool)
+        .layer(CookieManagerLayer::new());
 
     // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -70,6 +75,44 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+const USER_COOKIE_ID: &str = "user_id";
+
+struct UserIdCookie(Option<usize>);
+
+#[async_trait]
+impl<S> FromRequestParts<S> for UserIdCookie
+where
+    S: Send + Sync,
+{
+    type Rejection = (http::StatusCode, &'static str);
+
+    async fn from_request_parts(req: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let cookies = Cookies::from_request_parts(req, state).await?;
+
+        let user_id = cookies
+            .get(USER_COOKIE_ID)
+            .and_then(|c| c.value().parse::<usize>().ok());
+
+        Ok(UserIdCookie(user_id))
+    }
+}
+
+async fn get_user(
+    State(pool): State<PgPool>,
+    cookies: Cookies,
+    user_id: UserIdCookie,
+) -> Result<impl IntoResponse> {
+    cookies.add(Cookie::new(USER_COOKIE_ID, "123"));
+
+    let usertemplate = UserInputTemplate {};
+
+    if user_id.0.is_some() {
+        return Ok(Redirect::to("/5").into_response());
+    }
+
+    return Ok(HtmlTemplate(usertemplate).into_response());
 }
 
 async fn get_question(
