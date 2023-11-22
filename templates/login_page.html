@@ -1,0 +1,14 @@
+{% extends "base.html" %} {% block title %}Question ...{% endblock %} {% block
+content %}
+<div class="h-screen flex items-center justify-center">
+  <form
+    method="post"
+    action="/login"
+    hx-boost="true"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >
+    {% include "login_form.html" %}
+  </form>
+</div>
+{% endblock %}
