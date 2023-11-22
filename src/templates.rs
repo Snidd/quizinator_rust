@@ -39,7 +39,3 @@ pub struct QuestionTemplate {
     pub answers: Vec<String>,
     pub next_question_id: Option<i32>,
 }
-
-#[derive(Template)]
-#[template(path = "user_input.html")]
-pub struct UserInputTemplate {}

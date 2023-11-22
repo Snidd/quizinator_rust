@@ -1,14 +1,11 @@
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::login::{self};
 use crate::question::Question;
 use crate::templates::QuestionTemplate;
 
-use crate::{
-    answer::*,
-    templates::{HtmlTemplate, UserInputTemplate},
-    user_id_cookie::{UserIdCookie, USER_COOKIE_ID},
-};
+use crate::{answer::*, templates::HtmlTemplate, user_id_cookie::UserIdCookie};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Redirect},
@@ -16,7 +13,7 @@ use axum::{
     Router,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use tower_cookies::{Cookie, CookieManagerLayer, Cookies};
+use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -46,8 +43,9 @@ impl App {
         // build our application with some routes
         let app = Router::new()
             //.route("/", get(get_index).post(using_connection_extractor))
-            .route("/:question_id", get(get_question))
-            .route("/", get(get_user))
+            .route("/question/:question_id", get(get_question))
+            .route("/login", get(login::get).post(login::post))
+            .route("/", get(start_session))
             .nest_service("/static", ServeDir::new("static"))
             .with_state(pool)
             .layer(CookieManagerLayer::new());
@@ -57,25 +55,18 @@ impl App {
     }
 }
 
-async fn get_user(
-    State(_pool): State<PgPool>,
-    cookies: Cookies,
-    user_id: UserIdCookie,
-) -> Result<impl IntoResponse> {
-    cookies.add(Cookie::new(USER_COOKIE_ID, "123"));
-
-    let usertemplate = UserInputTemplate {};
-
-    if user_id.0.is_some() {
-        return Ok(Redirect::to("/5").into_response());
+async fn start_session(user_id: UserIdCookie) -> Result<impl IntoResponse> {
+    if let Some(_) = user_id.0 {
+        return Ok(Redirect::to("/7/question/12"));
+    } else {
+        return Ok(Redirect::to("/login"));
     }
-
-    return Ok(HtmlTemplate(usertemplate).into_response());
 }
 
 async fn get_question(
     Path(question_id): Path<i32>,
     State(pool): State<PgPool>,
+    user_id: UserIdCookie,
 ) -> Result<impl IntoResponse> {
     let question = sqlx::query_as!(
         Question,
@@ -108,9 +99,4 @@ async fn get_question(
     };
 
     return Ok(HtmlTemplate(template));
-
-    /*else {
-        return Html(NotFoundTemplate {}.render().unwrap());
-        //How to return 404 when question not found?!
-    }*/
 }

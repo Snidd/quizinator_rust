@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 mod answer;
 mod app;
 mod error;
+mod login;
 mod question;
 mod templates;
 mod user_id_cookie;
@@ -30,7 +31,7 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
 }
