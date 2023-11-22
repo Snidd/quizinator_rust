@@ -96,6 +96,7 @@ pub async fn get() -> Result<impl IntoResponse> {
     return Ok(HtmlTemplate(usertemplate).into_response());
 }
 
+#[derive(Deserialize)]
 pub struct UserDb {
     pub id: i32,
     pub unique: String,
